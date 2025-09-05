@@ -1,0 +1,23 @@
+{
+  "name": "frontend-tester",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdamChaseArnold/frontend-tester.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/AdamChaseArnold/frontend-tester/issues"
+  },
+  "homepage": "https://github.com/AdamChaseArnold/frontend-tester#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.3.1"
+  }
+}
