@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { validateUrl, validateBrowserSelection, formatError } from '../utils/validation';
 
 /**
  * TestForm Component - Main interface for initiating cyberpunk-themed e2e tests
@@ -65,6 +66,8 @@ const TestForm = () => {
           }
         } catch (error) {
           console.error('Error polling status:', error);
+          const errorMessage = error.response?.data?.error || formatError(error);
+          setMessage(`>> STATUS POLL FAILED: ${errorMessage}`);
           setIsRunning(false);
           clearInterval(interval);
         }
@@ -79,35 +82,41 @@ const TestForm = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!url.trim()) {
-      setMessage('Please select a valid URL');
+    // Validate URL
+    const urlValidation = validateUrl(url);
+    if (!urlValidation.valid) {
+      setMessage(`>> ERROR: ${urlValidation.error}`);
+      return;
+    }
+
+    // Validate browser selection
+    const browserValidation = validateBrowserSelection(browsers);
+    if (!browserValidation.valid) {
+      setMessage(`>> ERROR: ${browserValidation.error}`);
       return;
     }
 
     setIsRunning(true);
-    setMessage('Starting tests...');
+    setMessage('>> INITIATING NEURAL PROBE SEQUENCE...');
     setProgress(0);
     setStatus('Initializing...');
 
-    // Get selected browsers
-    const selectedBrowsers = Object.keys(browsers).filter(browser => browsers[browser]);
-    
-    if (selectedBrowsers.length === 0) {
-      setMessage('Please select at least one browser to test');
-      setIsRunning(false);
-      return;
-    }
-
     try {
       const response = await axios.post('/api/run-tests', { 
-        url, 
-        browsers: selectedBrowsers 
+        url: urlValidation.url, 
+        browsers: browserValidation.browsers 
       });
-      setTestId(response.data.testId);
-      setMessage('Test started successfully!');
+      
+      if (response.data && response.data.testId) {
+        setTestId(response.data.testId);
+        setMessage('>> NEURAL PROBE INITIATED - MATRIX INFILTRATION IN PROGRESS');
+      } else {
+        throw new Error('Invalid response from server');
+      }
     } catch (error) {
       console.error('Error starting tests:', error);
-      setMessage('Failed to start tests');
+      const errorMessage = error.response?.data?.error || formatError(error);
+      setMessage(`>> INITIATION FAILED: ${errorMessage}`);
       setIsRunning(false);
     }
   };
@@ -124,52 +133,26 @@ const TestForm = () => {
       setTestId(null);
     } catch (error) {
       console.error('Error cancelling test:', error);
-      setMessage('>> TERMINATION FAILED - SYSTEM ERROR');
+      const errorMessage = error.response?.data?.error || formatError(error);
+      setMessage(`>> TERMINATION FAILED: ${errorMessage}`);
     }
   };
 
   return (
-    <div className="cyber-panel cyber-fade-in" style={{ 
-      maxWidth: '600px', 
-      margin: '50px auto', 
-      padding: '30px'
-    }}>
-      <h1 className="cyber-heading cyber-glow-cyan" style={{ textAlign: 'center', marginBottom: '30px', fontSize: '2.5rem' }}>
+    <div className="cyber-panel cyber-fade-in test-form-container">
+      <h1 className="cyber-heading cyber-glow-cyan test-form-title">
         SYSTEM ANALYZER
       </h1>
       
       <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{
-            display: 'block',
-            marginBottom: '8px',
-            fontSize: '16px',
-            fontWeight: '500',
-            color: '#00ffff',
-            fontFamily: 'Orbitron, sans-serif',
-            textTransform: 'uppercase',
-            letterSpacing: '1px'
-          }}>
+        <div className="form-group">
+          <label className="form-label">
             >> TARGET URL:
           </label>
-          <div className="custom-dropdown" style={{ position: 'relative' }}>
+          <div className="custom-dropdown">
             <div
               onClick={() => !isRunning && setShowDropdown(!showDropdown)}
-              style={{
-                width: '100%',
-                padding: '12px 16px',
-                backgroundColor: '#1a1a1a',
-                border: '1px solid #00ffff',
-                color: '#f0f0f0',
-                fontFamily: 'Roboto Mono, monospace',
-                fontSize: '14px',
-                cursor: isRunning ? 'not-allowed' : 'pointer',
-                boxShadow: '0 0 5px rgba(0, 255, 255, 0.3)',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                minHeight: '20px'
-              }}
+              className={`dropdown-trigger ${isRunning ? 'disabled' : ''}`}
             >
               <span>{url || 'Select URL...'}</span>
               <svg 
@@ -192,19 +175,7 @@ const TestForm = () => {
               </svg>
             </div>
             {showDropdown && (
-              <div style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                right: 0,
-                backgroundColor: '#1a1a1a',
-                border: '1px solid #00ffff',
-                borderTop: 'none',
-                boxShadow: '0 4px 8px rgba(0, 255, 255, 0.2)',
-                zIndex: 1000,
-                maxHeight: '200px',
-                overflowY: 'auto'
-              }}>
+              <div className="dropdown-menu">
                 {urlOptions.map((option, index) => (
                   <div
                     key={index}
@@ -212,24 +183,7 @@ const TestForm = () => {
                       setUrl(option);
                       setShowDropdown(false);
                     }}
-                    style={{
-                      padding: '12px 16px',
-                      color: '#f0f0f0',
-                      fontFamily: 'Roboto Mono, monospace',
-                      fontSize: '14px',
-                      cursor: 'pointer',
-                      backgroundColor: url === option ? '#0a0a0a' : '#1a1a1a',
-                      borderBottom: index < urlOptions.length - 1 ? '1px solid #333' : 'none',
-                      transition: 'all 0.2s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = '#2a2a2a';
-                      e.target.style.color = '#00ffff';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = url === option ? '#0a0a0a' : '#1a1a1a';
-                      e.target.style.color = '#f0f0f0';
-                    }}
+                    className={`dropdown-item ${url === option ? 'selected' : ''}`}
                   >
                     {option}
                   </div>
@@ -240,40 +194,13 @@ const TestForm = () => {
         </div>
 
         {/* Browser Selection */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ 
-            display: 'block', 
-            marginBottom: '8px', 
-            fontSize: '16px', 
-            fontWeight: '500',
-            color: '#00ffff',
-            fontFamily: 'Orbitron, sans-serif',
-            fontWeight: '700',
-            textTransform: 'uppercase',
-            letterSpacing: '1px'
-          }}>
+        <div className="form-group">
+          <label className="form-label">
             >> BROWSER AGENTS:
           </label>
-          <div style={{ 
-            display: 'flex', 
-            gap: '15px', 
-            flexWrap: 'wrap',
-            padding: '10px',
-            backgroundColor: '#1a1a1a',
-            border: '1px solid #ff00ff',
-            boxShadow: '0 0 5px #ff00ff',
-            borderRadius: '0'
-          }}>
+          <div className="browser-selection">
             {Object.entries(browsers).map(([browser, checked]) => (
-              <label key={browser} style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                cursor: isRunning ? 'not-allowed' : 'pointer',
-                opacity: isRunning ? 0.6 : 1,
-                color: '#f0f0f0',
-                fontFamily: 'Roboto Mono, monospace'
-              }}>
+              <label key={browser} className={`browser-checkbox ${isRunning ? 'disabled' : ''}`}>
                 <input
                   type="checkbox"
                   checked={checked}
@@ -294,72 +221,36 @@ const TestForm = () => {
               </label>
             ))}
           </div>
-          <div style={{ 
-            fontSize: '12px', 
-            color: '#666', 
-            marginTop: '4px' 
-          }}>
+          <div className="browser-count">
             Selected: {Object.values(browsers).filter(Boolean).length} browser(s)
           </div>
         </div>
 
         {/* Status Bar */}
         {isRunning && (
-          <div style={{ marginBottom: '20px' }}>
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center',
-              marginBottom: '8px'
-            }}>
-              <span className="cyber-text" style={{ fontSize: '14px', fontWeight: '500', color: '#00ffff', fontFamily: 'Orbitron, sans-serif' }}>
+          <div className="progress-container">
+            <div className="progress-header">
+              <span className="progress-label">
                 >> SCAN PROGRESS: {progress}%
               </span>
-              <span className="cyber-text" style={{ fontSize: '12px', color: '#f0f0f0' }}>
+              <span className="progress-status">
                 {status}
               </span>
             </div>
-            <div style={{
-              width: '100%',
-              height: '8px',
-              backgroundColor: '#1a1a1a',
-              border: '1px solid #00ffff',
-              borderRadius: '0',
-              overflow: 'hidden',
-              boxShadow: '0 0 5px rgba(0, 255, 255, 0.3)'
-            }}>
-              <div style={{
-                width: `${progress}%`,
-                height: '100%',
-                backgroundColor: '#00ffff',
-                transition: 'width 0.3s ease',
-                borderRadius: '0',
-                boxShadow: '0 0 10px rgba(0, 255, 255, 0.5)'
-              }} />
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${progress}%` }} />
             </div>
-            <div className="cyber-text" style={{ 
-              fontSize: '12px', 
-              color: '#00ffff', 
-              marginTop: '4px',
-              textAlign: 'center',
-              fontFamily: 'Roboto Mono, monospace',
-              textTransform: 'uppercase',
-              letterSpacing: '1px'
-            }}>
+            <div className="progress-message">
               {progress === 100 ? '>> NEURAL PROBE COMPLETE - REDIRECTING...' : '>> INFILTRATING TARGET MATRIX...'}
             </div>
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div className="button-group">
           <button 
             type="submit" 
             disabled={isRunning}
-            className={`cyber-button ${isRunning ? '' : ''}`}
-            style={{
-              flex: 1,
-              fontSize: '16px'
-            }}
+            className={`cyber-button button-primary ${isRunning ? '' : ''}`}
           >
             {isRunning ? 'EXECUTING...' : 'INITIATE SCAN'}
           </button>
@@ -368,11 +259,7 @@ const TestForm = () => {
             <button 
               type="button"
               onClick={handleCancel}
-              className="cyber-button cyber-button-secondary"
-              style={{
-                flex: '0 0 auto',
-                fontSize: '16px'
-              }}
+              className="cyber-button cyber-button-secondary button-secondary"
             >
               ABORT
             </button>
@@ -381,13 +268,7 @@ const TestForm = () => {
       </form>
 
       {message && (
-        <div className="cyber-panel" style={{ 
-          marginTop: '20px', 
-          padding: '15px',
-          textAlign: 'center',
-          color: '#f0f0f0',
-          fontFamily: 'Roboto Mono, monospace'
-        }}>
+        <div className="cyber-panel message-panel">
           {message}
         </div>
       )}

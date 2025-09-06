@@ -41,24 +41,10 @@ const StatusPage = () => {
 
   if (loading) {
     return (
-      <div className="cyber-panel cyber-fade-in" style={{
-        maxWidth: '800px',
-        margin: '50px auto',
-        padding: '30px',
-        textAlign: 'center'
-      }}>
-        <h1 className="cyber-heading cyber-glow-cyan" style={{ fontSize: '2.5rem', marginBottom: '30px' }}>RETRIEVING DATA...</h1>
-        <div style={{
-          width: '50px',
-          height: '50px',
-          border: '3px solid #1a1a1a',
-          borderTop: '3px solid #00ffff',
-          borderRadius: '50%',
-          animation: 'spin 1s linear infinite',
-          margin: '20px auto',
-          boxShadow: '0 0 10px rgba(0, 255, 255, 0.5)'
-        }} />
-        <p className="cyber-text" style={{ color: '#00ffff', marginTop: '20px' }}>
+      <div className="cyber-panel cyber-fade-in status-container loading-container">
+        <h1 className="cyber-heading cyber-glow-cyan status-title">RETRIEVING DATA...</h1>
+        <div className="loading-spinner" />
+        <p className="cyber-text loading-message">
           >> ACCESSING NEURAL PROBE RESULTS...
         </p>
       </div>
@@ -67,13 +53,8 @@ const StatusPage = () => {
 
   if (error) {
     return (
-      <div className="cyber-panel cyber-fade-in" style={{ 
-        maxWidth: '800px', 
-        margin: '50px auto', 
-        padding: '30px',
-        textAlign: 'center'
-      }}>
-        <h1 className="cyber-heading cyber-glow-secondary" style={{ fontSize: '2.5rem' }}>SYSTEM ERROR</h1>
+      <div className="cyber-panel cyber-fade-in status-container error-container">
+        <h1 className="cyber-heading cyber-glow-secondary status-title">SYSTEM ERROR</h1>
         <p className="cyber-text" style={{ color: '#ff00ff' }}>>> {error}</p>
         <button
           onClick={handleRunNewTest}
@@ -89,16 +70,10 @@ const StatusPage = () => {
   }
 
   return (
-    <div className="cyber-panel cyber-fade-in" style={{ 
-      maxWidth: '800px', 
-      margin: '50px auto', 
-      padding: '30px',
-      marginLeft: 'auto',
-      marginRight: 'auto'
-    }}>
-      <div style={{ textAlign: 'center', marginBottom: '30px' }}>
-        <h1 className="cyber-heading cyber-glow-cyan" style={{ fontSize: '2.5rem', marginBottom: '30px' }}>SCAN RESULTS</h1>
-        <div style={{ fontFamily: 'Roboto Mono, monospace', fontSize: '14px', color: '#00ffff', textAlign: 'left', display: 'inline-block' }}>
+    <div className="cyber-panel cyber-fade-in status-container">
+      <div className="status-info-center">
+        <h1 className="cyber-heading cyber-glow-cyan status-title">SCAN RESULTS</h1>
+        <div className="status-info">
           <div className="cyber-text scan-id-text">
             >> SCAN_ID&nbsp;&nbsp;&nbsp;&nbsp;: {testId}
           </div>

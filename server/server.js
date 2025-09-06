@@ -5,8 +5,14 @@ const { spawn } = require('child_process');
 const fs = require('fs-extra');
 const path = require('path');
 
+// Configuration constants
+const CONFIG = {
+  PORT: process.env.PORT || 5000,
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:4000'
+};
+
 const app = express();
-const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
@@ -16,6 +22,72 @@ app.use(express.json());
 const testRuns = new Map();
 // Store running processes for cancellation
 const runningProcesses = new Map();
+
+// Utility functions
+const validateUrl = (url) => {
+  if (!url || typeof url !== 'string') {
+    return { valid: false, error: 'URL is required and must be a string' };
+  }
+  
+  try {
+    new URL(url);
+    return { valid: true };
+  } catch (error) {
+    return { valid: false, error: 'Invalid URL format' };
+  }
+};
+
+const validateBrowsers = (browsers) => {
+  const validBrowsers = ['chromium', 'firefox', 'webkit'];
+  if (!Array.isArray(browsers) || browsers.length === 0) {
+    return { valid: false, error: 'At least one browser must be selected' };
+  }
+  
+  const invalidBrowsers = browsers.filter(browser => !validBrowsers.includes(browser));
+  if (invalidBrowsers.length > 0) {
+    return { valid: false, error: `Invalid browsers: ${invalidBrowsers.join(', ')}` };
+  }
+  
+  return { valid: true };
+};
+
+const createTestRun = (url, browsers) => {
+  const testId = uuidv4();
+  const testRun = {
+    id: testId,
+    url,
+    browsers,
+    status: 'initializing',
+    progress: 0,
+    startTime: new Date(),
+    completed: false,
+    results: null
+  };
+  
+  testRuns.set(testId, testRun);
+  return testRun;
+};
+
+const updateTestStatus = (testId, updates) => {
+  const testRun = testRuns.get(testId);
+  if (testRun) {
+    Object.assign(testRun, updates);
+  }
+  return testRun;
+};
+
+const cleanupTestRun = async (testId) => {
+  // Remove from running processes
+  runningProcesses.delete(testId);
+  
+  // Clean up dynamic test file
+  const testFilePath = path.join(__dirname, '..', 'tests', `dynamic-${testId}.spec.js`);
+  try {
+    await fs.remove(testFilePath);
+  } catch (error) {
+    console.warn(`Failed to cleanup test file: ${error.message}`);
+  }
+};
 
 // Root route for browser access
 app.get('/', (req, res) => {
@@ -30,50 +102,79 @@ app.get('/', (req, res) => {
       'GET /api/debug/:testId': 'Debug test run data',
       'POST /api/test-simple': 'Simple test without Playwright'
     },
-    frontend: 'http://localhost:4000'
+    frontend: CONFIG.FRONTEND_URL
   });
 });
 
 // API Routes
 app.post('/api/run-tests', async (req, res) => {
-  const { url, browsers = ['chromium', 'firefox', 'webkit'] } = req.body;
-  
-  if (!url) {
-    return res.status(400).json({ error: 'URL is required' });
+  try {
+    const { url, browsers = ['chromium', 'firefox', 'webkit'] } = req.body;
+    
+    // Validate URL
+    const urlValidation = validateUrl(url);
+    if (!urlValidation.valid) {
+      return res.status(400).json({ error: urlValidation.error });
+    }
+    
+    // Validate browsers
+    const browserValidation = validateBrowsers(browsers);
+    if (!browserValidation.valid) {
+      return res.status(400).json({ error: browserValidation.error });
+    }
+
+    // Create test run
+    const testRun = createTestRun(url, browsers);
+
+    // Start the test execution asynchronously
+    executeTests(testRun.id, url, browsers).catch(error => {
+      console.error(`Failed to execute tests for ${testRun.id}:`, error);
+      updateTestStatus(testRun.id, {
+        status: 'Failed',
+        completed: true,
+        results: {
+          summary: { passed: 0, failed: 1, total: 1, duration: '0ms' },
+          tests: [{
+            title: 'Test Execution Error',
+            status: 'failed',
+            duration: 0,
+            error: error.message
+          }],
+          url,
+          timestamp: new Date()
+        }
+      });
+    });
+
+    res.json({ testId: testRun.id, message: 'Tests started' });
+  } catch (error) {
+    console.error('Error in /api/run-tests:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-
-  const testId = uuidv4();
-  const testRun = {
-    id: testId,
-    url,
-    status: 'initializing',
-    progress: 0,
-    startTime: new Date(),
-    completed: false,
-    results: null
-  };
-
-  testRuns.set(testId, testRun);
-
-  // Start the test execution asynchronously
-  executeTests(testId, url, browsers);
-
-  res.json({ testId, message: 'Tests started' });
 });
 
 app.get('/api/test-status/:testId', (req, res) => {
-  const { testId } = req.params;
-  const testRun = testRuns.get(testId);
+  try {
+    const { testId } = req.params;
+    
+    if (!testId || typeof testId !== 'string') {
+      return res.status(400).json({ error: 'Invalid test ID' });
+    }
+    
+    const testRun = testRuns.get(testId);
+    if (!testRun) {
+      return res.status(404).json({ error: 'Test run not found' });
+    }
 
-  if (!testRun) {
-    return res.status(404).json({ error: 'Test run not found' });
+    res.json({
+      progress: testRun.progress,
+      status: testRun.status,
+      completed: testRun.completed
+    });
+  } catch (error) {
+    console.error('Error in /api/test-status:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-
-  res.json({
-    progress: testRun.progress,
-    status: testRun.status,
-    completed: testRun.completed
-  });
 });
 
 app.get('/api/test-results/:testId', (req, res) => {
@@ -109,45 +210,58 @@ app.get('/api/test-results/:testId', (req, res) => {
   }
 });
 
-app.post('/api/cancel-test/:testId', (req, res) => {
-  const { testId } = req.params;
-  const testRun = testRuns.get(testId);
-  const process = runningProcesses.get(testId);
-
-  if (!testRun) {
-    return res.status(404).json({ error: 'Test run not found' });
-  }
-
-  if (testRun.completed) {
-    return res.status(400).json({ error: 'Test already completed' });
-  }
-
-  // Kill the running process if it exists
-  if (process) {
-    try {
-      process.kill('SIGTERM');
-      runningProcesses.delete(testId);
-    } catch (error) {
-      console.error('Error killing process:', error);
+app.post('/api/cancel-test/:testId', async (req, res) => {
+  try {
+    const { testId } = req.params;
+    
+    if (!testId || typeof testId !== 'string') {
+      return res.status(400).json({ error: 'Invalid test ID' });
     }
+    
+    const testRun = testRuns.get(testId);
+    if (!testRun) {
+      return res.status(404).json({ error: 'Test run not found' });
+    }
+
+    if (testRun.completed) {
+      return res.status(400).json({ error: 'Test already completed' });
+    }
+
+    // Kill the running process if it exists
+    const process = runningProcesses.get(testId);
+    if (process) {
+      try {
+        process.kill('SIGTERM');
+      } catch (error) {
+        console.error('Error killing process:', error);
+      }
+    }
+
+    // Update test run status
+    updateTestStatus(testId, {
+      status: 'Cancelled',
+      completed: true,
+      results: {
+        summary: { passed: 0, failed: 0, total: 0, duration: '0ms' },
+        tests: [{
+          title: 'Test Cancelled',
+          status: 'cancelled',
+          duration: 0,
+          error: 'Test was cancelled by user'
+        }],
+        url: testRun.url,
+        timestamp: new Date()
+      }
+    });
+
+    // Cleanup
+    await cleanupTestRun(testId);
+
+    res.json({ message: 'Test cancelled successfully' });
+  } catch (error) {
+    console.error('Error in /api/cancel-test:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-
-  // Update test run status
-  testRun.status = 'Cancelled';
-  testRun.completed = true;
-  testRun.results = {
-    summary: { passed: 0, failed: 0, total: 0, duration: '0ms' },
-    tests: [{
-      title: 'Test Cancelled',
-      status: 'cancelled',
-      duration: 0,
-      error: 'Test was cancelled by user'
-    }],
-    url,
-    timestamp: new Date()
-  };
-
-  res.json({ message: 'Test cancelled successfully' });
 });
 
 // Simple test endpoint that bypasses Playwright
@@ -209,13 +323,127 @@ app.get('/api/debug/:testId', (req, res) => {
   }
 });
 
+// Refactored test execution functions
+const createPlaywrightCommand = (testId, browsers) => {
+  const isWindows = process.platform === 'win32';
+  const projectArgs = browsers.map(browser => `--project=${browser}`);
+  
+  if (isWindows) {
+    return {
+      command: 'cmd',
+      args: ['/c', `npx playwright test dynamic-${testId}.spec.js --reporter=json ${projectArgs.join(' ')}`]
+    };
+  } else {
+    return {
+      command: 'npx',
+      args: ['playwright', 'test', `dynamic-${testId}.spec.js`, '--reporter=json', ...projectArgs]
+    };
+  }
+};
+
+const spawnPlaywrightProcess = (testId, browsers) => {
+  const { command, args } = createPlaywrightCommand(testId, browsers);
+  const isWindows = process.platform === 'win32';
+  
+  return spawn(command, args, {
+    cwd: path.join(__dirname, '..'),
+    stdio: ['pipe', 'pipe', 'pipe'],
+    shell: isWindows
+  });
+};
+
+const handleProcessOutput = (testId, playwrightProcess) => {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const testRun = testRuns.get(testId);
+
+    playwrightProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+      if (testRun) {
+        testRun.progress = Math.min(testRun.progress + 5, 90);
+      }
+    });
+
+    playwrightProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    playwrightProcess.on('close', (code) => {
+      resolve({ stdout, stderr, code });
+    });
+
+    playwrightProcess.on('error', (error) => {
+      reject(error);
+    });
+  });
+};
+
+const processTestResults = async (testId, stdout, stderr, code, url, startTime) => {
+  const testRun = testRuns.get(testId);
+  if (!testRun) return;
+
+  // Check if test was cancelled
+  if (testRun.status === 'Cancelled') {
+    return;
+  }
+
+  updateTestStatus(testId, {
+    progress: 100,
+    status: 'Processing results...'
+  });
+
+  console.log(`Playwright process closed with code: ${code}`);
+  console.log(`stdout length: ${stdout.length}`);
+  console.log(`stderr length: ${stderr.length}`);
+  
+  if (code !== 0) {
+    console.log('Playwright process failed with non-zero exit code');
+    console.log('stderr content:', stderr);
+  }
+
+  try {
+    console.log('Parsing test results...');
+    const results = parseTestResults(stdout, stderr, url, startTime);
+    console.log('Parsed results:', results);
+    
+    updateTestStatus(testId, {
+      results,
+      completed: true,
+      status: 'Completed'
+    });
+  } catch (error) {
+    console.error('Error parsing results:', error);
+    updateTestStatus(testId, {
+      results: {
+        summary: { passed: 0, failed: 1, total: 1, duration: '0ms' },
+        tests: [{
+          title: 'Test Execution Error',
+          status: 'failed',
+          duration: 0,
+          error: `Test parsing failed: ${error.message}. Exit code: ${code}. Stderr: ${stderr.substring(0, 200)}`
+        }],
+        url,
+        timestamp: new Date()
+      },
+      completed: true,
+      status: 'Failed'
+    });
+  }
+};
+
 async function executeTests(testId, url, browsers = ['chromium', 'firefox', 'webkit']) {
   const testRun = testRuns.get(testId);
+  if (!testRun) {
+    throw new Error('Test run not found');
+  }
   
   try {
     // Update status
-    testRun.status = 'Creating dynamic test file...';
-    testRun.progress = 10;
+    updateTestStatus(testId, {
+      status: 'Creating dynamic test file...',
+      progress: 10
+    });
 
     // Create a dynamic test file for the provided URL
     const dynamicTestContent = generateDynamicTest(url);
@@ -223,33 +451,15 @@ async function executeTests(testId, url, browsers = ['chromium', 'firefox', 'web
     
     await fs.writeFile(testFilePath, dynamicTestContent);
 
-    testRun.status = 'Running Playwright tests...';
-    testRun.progress = 30;
+    updateTestStatus(testId, {
+      status: 'Running Playwright tests...',
+      progress: 30
+    });
 
     // Execute Playwright tests
     let playwrightProcess;
     try {
-      // Try different approaches to run Playwright
-      const isWindows = process.platform === 'win32';
-      let command, args;
-      
-      // Create project filter arguments for selected browsers
-      const projectArgs = browsers.map(browser => `--project=${browser}`).join(' ');
-      
-      if (isWindows) {
-        // On Windows, use cmd to run npx
-        command = 'cmd';
-        args = ['/c', `npx playwright test dynamic-${testId}.spec.js --reporter=json ${projectArgs}`];
-      } else {
-        command = 'npx';
-        args = ['playwright', 'test', `dynamic-${testId}.spec.js`, '--reporter=json', ...browsers.map(b => `--project=${b}`)];
-      }
-      
-      playwrightProcess = spawn(command, args, {
-        cwd: path.join(__dirname, '..'),
-        stdio: ['pipe', 'pipe', 'pipe'],
-        shell: isWindows
-      });
+      playwrightProcess = spawnPlaywrightProcess(testId, browsers);
       
       // Store the process for potential cancellation
       runningProcesses.set(testId, playwrightProcess);
@@ -258,86 +468,37 @@ async function executeTests(testId, url, browsers = ['chromium', 'firefox', 'web
       throw new Error('Playwright is not installed or npx is not available');
     }
 
-    let stdout = '';
-    let stderr = '';
-
-    playwrightProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
-      testRun.progress = Math.min(testRun.progress + 5, 90);
-    });
-
-    playwrightProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    playwrightProcess.on('close', async (code) => {
-      // Remove from running processes
-      runningProcesses.delete(testId);
-      
-      // Check if test was cancelled
-      if (testRun.status === 'Cancelled') {
-        return;
-      }
-
-      testRun.progress = 100;
-      testRun.status = 'Processing results...';
-
-      console.log(`Playwright process closed with code: ${code}`);
-      console.log(`stdout length: ${stdout.length}`);
-      console.log(`stderr length: ${stderr.length}`);
-      
-      if (code !== 0) {
-        console.log('Playwright process failed with non-zero exit code');
-        console.log('stderr content:', stderr);
-      }
-
-      try {
-        // Parse test results
-        console.log('Parsing test results...');
-        console.log('stdout preview:', stdout.substring(0, 500));
-        console.log('stderr preview:', stderr.substring(0, 500));
-        const results = parseTestResults(stdout, stderr, url, testRun.startTime);
-        console.log('Parsed results:', results);
-        testRun.results = results;
-        testRun.completed = true;
-        testRun.status = 'Completed';
-
-        // Clean up dynamic test file
-        await fs.remove(testFilePath);
-      } catch (error) {
-        console.error('Error parsing results:', error);
-        console.error('Error stack:', error.stack);
-        testRun.results = {
-          summary: { passed: 0, failed: 1, total: 1, duration: '0ms' },
-          tests: [{
-            title: 'Test Execution Error',
-            status: 'failed',
-            duration: 0,
-            error: `Test parsing failed: ${error.message}. Exit code: ${code}. Stderr: ${stderr.substring(0, 200)}`
-          }],
-          url,
-          timestamp: new Date()
-        };
-        testRun.completed = true;
-        testRun.status = 'Failed';
-      }
-    });
+    // Handle process output and completion
+    const { stdout, stderr, code } = await handleProcessOutput(testId, playwrightProcess);
+    
+    // Remove from running processes
+    runningProcesses.delete(testId);
+    
+    // Process results
+    await processTestResults(testId, stdout, stderr, code, url, testRun.startTime);
+    
+    // Clean up dynamic test file
+    await cleanupTestRun(testId);
 
   } catch (error) {
     console.error('Error executing tests:', error);
-    testRun.status = 'Failed';
-    testRun.completed = true;
-    testRun.results = {
-      summary: { passed: 0, failed: 1, total: 1, duration: '0ms' },
-      tests: [{
-        title: 'Test Setup Error',
-        status: 'failed',
-        duration: 0,
-        error: error.message
-      }],
-      url,
-      timestamp: new Date()
-    };
+    updateTestStatus(testId, {
+      status: 'Failed',
+      completed: true,
+      results: {
+        summary: { passed: 0, failed: 1, total: 1, duration: '0ms' },
+        tests: [{
+          title: 'Test Setup Error',
+          status: 'failed',
+          duration: 0,
+          error: error.message
+        }],
+        url,
+        timestamp: new Date()
+      }
+    });
+    
+    await cleanupTestRun(testId);
   }
 }
 
@@ -498,6 +659,8 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(CONFIG.PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${CONFIG.PORT}`);
+  console.log(`Environment: ${CONFIG.NODE_ENV}`);
+  console.log(`Frontend URL: ${CONFIG.FRONTEND_URL}`);
 });
