@@ -43,11 +43,8 @@ WORKDIR /app
 # Copy package files
 COPY server/package*.json ./
 
-# Install dependencies first
+# Install dependencies first (including Playwright)
 RUN npm ci --only=production
-
-# Install Playwright package
-RUN npm install @playwright/test
 
 # Install Playwright browsers with dependencies
 RUN npx playwright install --with-deps
